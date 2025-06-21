@@ -42,6 +42,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/drivers/mediatrack"
 	_ "github.com/OpenListTeam/OpenList/drivers/mega"
 	_ "github.com/OpenListTeam/OpenList/drivers/misskey"
+	_ "github.com/OpenListTeam/OpenList/drivers/modelscope"
 	_ "github.com/OpenListTeam/OpenList/drivers/mopan"
 	_ "github.com/OpenListTeam/OpenList/drivers/netease_music"
 	_ "github.com/OpenListTeam/OpenList/drivers/onedrive"
