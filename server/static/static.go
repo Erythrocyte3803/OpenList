@@ -1,6 +1,7 @@
 package static
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,20 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/public"
 	"github.com/gin-gonic/gin"
 )
+
+type ManifestIcon struct {
+	Src   string `json:"src"`
+	Sizes string `json:"sizes"`
+	Type  string `json:"type"`
+}
+
+type Manifest struct {
+	Display  string         `json:"display"`
+	Scope    string         `json:"scope"`
+	StartURL string         `json:"start_url"`
+	Name     string         `json:"name"`
+	Icons    []ManifestIcon `json:"icons"`
+}
 
 var static fs.FS
 
@@ -43,9 +58,9 @@ func replaceStrings(content string, replacements map[string]string) string {
 
 func initIndex(siteConfig SiteConfig) {
 	utils.Log.Debug("Initializing index.html...")
-	// dist_dir is empty and cdn is not empty add web_version is empty or beta or dev
-	if conf.Conf.DistDir == "" && conf.Conf.Cdn != "" && (conf.WebVersion == "" || conf.WebVersion == "beta" || conf.WebVersion == "dev") {
-		utils.Log.Infof("Fetching index.html from CDN: %s/index.html...", conf.Conf.Cdn)
+	// dist_dir is empty and cdn is not empty, and web_version is empty or beta or dev or rolling
+	if conf.Conf.DistDir == "" && conf.Conf.Cdn != "" && (conf.WebVersion == "" || conf.WebVersion == "beta" || conf.WebVersion == "dev" || conf.WebVersion == "rolling") {
+		utils.Log.Infof("Fetching index.html from CDN: %s/index.html...", siteConfig.Cdn)
 		resp, err := base.RestyClient.R().
 			SetHeader("Accept", "text/html").
 			Get(fmt.Sprintf("%s/index.html", siteConfig.Cdn))
@@ -77,9 +92,15 @@ func initIndex(siteConfig SiteConfig) {
 		utils.Log.Debug("Successfully read index.html from static files system")
 	}
 	utils.Log.Debug("Replacing placeholders in index.html...")
+	// Construct the correct manifest path based on basePath
+	manifestPath := "/manifest.json"
+	if siteConfig.BasePath != "/" {
+		manifestPath = siteConfig.BasePath + "/manifest.json"
+	}
 	replaceMap := map[string]string{
-		"cdn: undefined":       fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
-		"base_path: undefined": fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
+		"cdn: undefined":                    fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
+		"base_path: undefined":              fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
+		`href="/manifest.json"`:             fmt.Sprintf(`href="%s"`, manifestPath),
 	}
 	conf.RawIndexHtml = replaceStrings(conf.RawIndexHtml, replaceMap)
 	UpdateIndex()
@@ -110,12 +131,57 @@ func UpdateIndex() {
 	utils.Log.Debug("Index.html update completed")
 }
 
+func ManifestJSON(c *gin.Context) {
+	// Get site configuration to ensure consistent base path handling
+	siteConfig := getSiteConfig()
+	
+	// Get site title from settings
+	siteTitle := setting.GetStr(conf.SiteTitle)
+	
+	// Get logo from settings, use the first line (light theme logo)
+	logoSetting := setting.GetStr(conf.Logo)
+	logoUrl := strings.Split(logoSetting, "\n")[0]
+
+	// Use base path from site config for consistency
+	basePath := siteConfig.BasePath
+
+	// Determine scope and start_url
+	// PWA scope and start_url should always point to our application's base path
+	// regardless of whether static resources come from CDN or local server
+	scope := basePath
+	startURL := basePath
+
+	manifest := Manifest{
+		Display:  "standalone",
+		Scope:    scope,
+		StartURL: startURL,
+		Name:     siteTitle,
+		Icons: []ManifestIcon{
+			{
+				Src:   logoUrl,
+				Sizes: "512x512",
+				Type:  "image/png",
+			},
+		},
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.Header("Cache-Control", "public, max-age=3600") // cache for 1 hour
+	
+	if err := json.NewEncoder(c.Writer).Encode(manifest); err != nil {
+		utils.Log.Errorf("Failed to encode manifest.json: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate manifest"})
+		return
+	}
+}
+
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	utils.Log.Debug("Setting up static routes...")
 	siteConfig := getSiteConfig()
 	initStatic()
 	initIndex(siteConfig)
 	folders := []string{"assets", "images", "streamer", "static"}
+	
 	if conf.Conf.Cdn == "" {
 		utils.Log.Debug("Setting up static file serving...")
 		r.Use(func(c *gin.Context) {

@@ -2,8 +2,10 @@ package op
 
 import (
 	"context"
+	stderrors "errors"
 	stdpath "path"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -249,15 +251,38 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 
 var linkCache = cache.NewMemCache(cache.WithShards[*model.Link](16))
 var linkG = singleflight.Group[*model.Link]{Remember: true}
+var errLinkMFileCache = stderrors.New("ErrLinkMFileCache")
 
 // Link get link, if is an url. should have an expiry time
 func Link(ctx context.Context, storage driver.Driver, path string, args model.LinkArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return nil, nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
 	}
-	file, err := GetUnwrap(ctx, storage, path)
-	if err != nil {
-		return nil, nil, errors.WithMessage(err, "failed to get file")
+	var (
+		file model.Obj
+		err  error
+	)
+	// use cache directly
+	dir, name := stdpath.Split(stdpath.Join(storage.GetStorage().MountPath, path))
+	if cacheFiles, ok := listCache.Get(strings.TrimSuffix(dir, "/")); ok {
+		for _, f := range cacheFiles {
+			if f.GetName() == name {
+				file = model.UnwrapObj(f)
+				break
+			}
+		}
+	} else {
+		if g, ok := storage.(driver.GetObjInfo); ok {
+			file, err = g.GetObjInfo(ctx, path)
+		} else {
+			file, err = GetUnwrap(ctx, storage, path)
+		}
+	}
+	if file == nil {
+		if err != nil {
+			return nil, nil, errors.WithMessage(err, "failed to get file")
+		}
+		return nil, nil, errors.WithStack(errs.ObjectNotFound)
 	}
 	if file.IsDir() {
 		return nil, nil, errors.WithStack(errs.NotFile)
@@ -268,16 +293,21 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return link, file, nil
 	}
 
-	var forget utils.CloseFunc
+	var forget any
+	var linkM *model.Link
 	fn := func() (*model.Link, error) {
 		link, err := storage.Link(ctx, file, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed get link")
 		}
+		if link.MFile != nil && forget != nil {
+			linkM = link
+			return nil, errLinkMFileCache
+		}
 		if link.Expiration != nil {
 			linkCache.Set(key, link, cache.WithEx[*model.Link](*link.Expiration))
 		}
-		link.Add(forget)
+		link.AddIfCloser(forget)
 		return link, nil
 	}
 
@@ -289,13 +319,13 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return link, file, err
 	}
 
-	forget = func() error {
+	forget = utils.CloseFunc(func() error {
 		if forget != nil {
 			forget = nil
 			linkG.Forget(key)
 		}
 		return nil
-	}
+	})
 	link, err, _ := linkG.Do(key, fn)
 	if err == nil && !link.AcquireReference() {
 		link, err, _ = linkG.Do(key, fn)
@@ -303,11 +333,19 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			link.AcquireReference()
 		}
 	}
+
+	if err == errLinkMFileCache {
+		if linkM != nil {
+			return linkM, file, nil
+		}
+		forget = nil
+		link, err = fn()
+	}
+
 	if err != nil {
 		return nil, nil, err
 	}
-
-	return link, file, err
+	return link, file, nil
 }
 
 // Other api
