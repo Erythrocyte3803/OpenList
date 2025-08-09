@@ -1,9 +1,10 @@
 package modelscope
 
 import (
-	"time"
 	stdpath "path"
-	"github.com/OpenListTeam/OpenList/internal/model"
+	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
 // do others that not defined in Driver interface

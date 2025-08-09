@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/OpenListTeam/OpenList/internal/driver"
-	"github.com/OpenListTeam/OpenList/internal/errs"
-	"github.com/OpenListTeam/OpenList/internal/model"
-	"github.com/OpenListTeam/OpenList/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -66,12 +66,12 @@ func (d *ModelScope) List(ctx context.Context, dir model.Obj, args model.ListArg
 		utils.Log.Errorf("modelscope list api response body: %s", string(resp.Body()))
 		return nil, err
 	}
-	
+
 	if !fileListResp.Success {
 		utils.Log.Errorf("modelscope list api logic error: %s (RequestId: %s)", fileListResp.Message, fileListResp.RequestId)
 		return nil, fmt.Errorf("modelscope api error: %s", fileListResp.Message)
 	}
-	
+
 	return filesToObjs(fileListResp.Data.Files), nil
 }
 

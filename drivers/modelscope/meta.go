@@ -1,8 +1,8 @@
 package modelscope
 
 import (
-	"github.com/OpenListTeam/OpenList/internal/driver"
-	"github.com/OpenListTeam/OpenList/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 const (
@@ -10,7 +10,7 @@ const (
 )
 
 var config = driver.Config{
-	Name: DriverName,
+	Name:      DriverName,
 	OnlyProxy: true,
 }
 
